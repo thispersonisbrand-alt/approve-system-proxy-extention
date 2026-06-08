@@ -4,7 +4,6 @@ const crypto = require('crypto');
 
 const app = express();
 
-// CORS configuration
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -65,7 +64,6 @@ app.get('/', (req, res) => {
 <html>
 <head>
     <title>Proxy Tools API Server</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -85,7 +83,7 @@ app.get('/', (req, res) => {
             text-align: center;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }
-        h1 { color: #667eea; margin-bottom: 10px; font-size: 28px; }
+        h1 { color: #667eea; margin-bottom: 10px; }
         .status { background: #d4edda; color: #155724; padding: 10px; border-radius: 10px; margin: 20px 0; }
         .info { text-align: left; background: #f8f9fa; padding: 15px; border-radius: 10px; margin: 20px 0; }
         .info-item { padding: 8px 0; border-bottom: 1px solid #e0e0e0; }
@@ -109,8 +107,8 @@ app.get('/', (req, res) => {
         <div class="info">
             <div class="info-item"><span class="label">📡 Status:</span> Online</div>
             <div class="info-item"><span class="label">🤖 Telegram Bot:</span> ${TELEGRAM_BOT_TOKEN ? '✅ Connected' : '❌ Not Configured'}</div>
-            <div class="info-item"><span class="label">👥 Pending Requests:</span> ${pendingRequests.length}</div>
-            <div class="info-item"><span class="label">✅ Approved Users:</span> ${approvedDevices.size}</div>
+            <div class="info-item"><span class="label">👥 Pending:</span> ${pendingRequests.length}</div>
+            <div class="info-item"><span class="label">✅ Approved:</span> ${approvedDevices.size}</div>
         </div>
         <a href="/admin" class="button">📊 Admin Dashboard</a>
         <div class="footer">Made with ❤️ by This person is brand</div>
@@ -132,12 +130,12 @@ app.post('/api/request-access', async (req, res) => {
     
     if (approvedDevices.has(deviceId)) {
         const approved = approvedDevices.get(deviceId);
-        return res.json({ approved: true, key: approved.key, message: 'Device already approved!' });
+        return res.json({ approved: true, key: approved.key, message: 'Already approved!' });
     }
     
     const existingRequest = pendingRequests.find(r => r.deviceId === deviceId);
     if (existingRequest) {
-        return res.json({ pending: true, message: 'Request already pending. Wait for admin approval.' });
+        return res.json({ pending: true, message: 'Request already pending!' });
     }
     
     const accessKey = generateUniqueKey();
@@ -156,21 +154,29 @@ app.post('/api/request-access', async (req, res) => {
     
     pendingRequests.push(newRequest);
     
+    // Send Telegram notification to admin
     if (TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID) {
         const adminMessage = `
-🔐 <b>New Access Request!</b>
+🔐 <b>📨 NEW ACCESS REQUEST!</b>
 
+━━━━━━━━━━━━━━━━━━━━
 👤 <b>Name:</b> ${name}
 📱 <b>Telegram:</b> ${telegramUsername || 'Not provided'}
 🔑 <b>Key:</b> <code>${accessKey}</code>
-📱 <b>Device ID:</b> <code>${deviceId}</code>
+📱 <b>Device ID:</b> <code>${deviceId.substring(0, 20)}...</code>
 🆔 <b>Request ID:</b> ${requestId}
 ⏰ <b>Time:</b> ${new Date().toLocaleString()}
+━━━━━━━━━━━━━━━━━━━━
+
+⚙️ <b>Tool:</b> Proxy Tools Pro
+
+Please approve this request (30 days access).
         `;
         
         const keyboard = {
             inline_keyboard: [
                 [{ text: '✅ Approve (30 days)', callback_data: `approve_${requestId}` }],
+                [{ text: '⏰ Custom Days', callback_data: `custom_${requestId}` }],
                 [{ text: '❌ Reject', callback_data: `reject_${requestId}` }]
             ]
         };
@@ -178,7 +184,7 @@ app.post('/api/request-access', async (req, res) => {
         await sendTelegramMessage(ADMIN_CHAT_ID, adminMessage, keyboard);
     }
     
-    res.json({ success: true, pending: true, requestId: requestId, message: 'Access request sent to admin.' });
+    res.json({ success: true, pending: true, requestId: requestId, message: 'Request sent to admin!' });
 });
 
 // Check status
@@ -235,9 +241,9 @@ app.get('/api/admin/dashboard', async (req, res) => {
     });
 });
 
-// Approve request
+// Approve request with custom days
 app.post('/api/admin/approve', async (req, res) => {
-    const { requestId, authToken } = req.body;
+    const { requestId, authToken, days } = req.body;
     
     if (authToken !== 'admin-session-token') {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -250,8 +256,9 @@ app.post('/api/admin/approve', async (req, res) => {
     
     pendingRequests = pendingRequests.filter(r => r.id !== requestId);
     
+    const daysToAdd = days || 30;
     const expiryDate = new Date();
-    expiryDate.setDate(expiryDate.getDate() + 30);
+    expiryDate.setDate(expiryDate.getDate() + daysToAdd);
     
     approvedDevices.set(request.deviceId, {
         name: request.name,
@@ -261,18 +268,70 @@ app.post('/api/admin/approve', async (req, res) => {
         expiryDate: expiryDate.toISOString()
     });
     
+    // Send Telegram notification
     if (TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID) {
         await sendTelegramMessage(ADMIN_CHAT_ID, `
-✅ <b>Request Approved!</b>
+✅ <b>ACCESS APPROVED!</b>
 
-👤 Name: ${request.name}
-🔑 Key: <code>${request.key}</code>
-📱 Device: ${request.deviceId}
-⏰ Expires: ${expiryDate.toLocaleDateString()}
+━━━━━━━━━━━━━━━━━━━━
+👤 <b>Name:</b> ${request.name}
+🔑 <b>Key:</b> <code>${request.key}</code>
+📱 <b>Device:</b> ${request.deviceId.substring(0, 20)}...
+⏰ <b>Expires:</b> ${expiryDate.toLocaleDateString()} (${daysToAdd} days)
+━━━━━━━━━━━━━━━━━━━━
+
+User can now use the proxy tool.
         `);
     }
     
-    res.json({ success: true, message: 'Request approved successfully (30 days access)' });
+    res.json({ success: true, message: `Approved for ${daysToAdd} days`, expiryDate: expiryDate.toISOString() });
+});
+
+// Extend or reduce time
+app.post('/api/admin/update-expiry', async (req, res) => {
+    const { deviceId, authToken, action, days } = req.body;
+    
+    if (authToken !== 'admin-session-token') {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const device = approvedDevices.get(deviceId);
+    if (!device) {
+        return res.json({ error: 'Device not found' });
+    }
+    
+    const currentExpiry = new Date(device.expiryDate);
+    let newExpiry;
+    
+    if (action === 'extend') {
+        newExpiry = new Date(currentExpiry);
+        newExpiry.setDate(newExpiry.getDate() + days);
+    } else if (action === 'reduce') {
+        newExpiry = new Date(currentExpiry);
+        newExpiry.setDate(newExpiry.getDate() - days);
+    } else {
+        return res.json({ error: 'Invalid action' });
+    }
+    
+    device.expiryDate = newExpiry.toISOString();
+    approvedDevices.set(deviceId, device);
+    
+    // Send Telegram notification
+    if (TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID) {
+        const actionText = action === 'extend' ? 'EXTENDED' : 'REDUCED';
+        await sendTelegramMessage(ADMIN_CHAT_ID, `
+📅 <b>TIME ${actionText}!</b>
+
+━━━━━━━━━━━━━━━━━━━━
+👤 <b>Name:</b> ${device.name}
+📱 <b>Device:</b> ${deviceId.substring(0, 20)}...
+🔄 <b>Change:</b> ${days} days ${action}ed
+📆 <b>New Expiry:</b> ${newExpiry.toLocaleDateString()}
+━━━━━━━━━━━━━━━━━━━━
+        `);
+    }
+    
+    res.json({ success: true, newExpiry: newExpiry.toISOString(), message: `Time ${action}ed by ${days} days` });
 });
 
 // Reject request
@@ -283,7 +342,24 @@ app.post('/api/admin/reject', async (req, res) => {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     
-    pendingRequests = pendingRequests.filter(r => r.id !== requestId);
+    const request = pendingRequests.find(r => r.id === requestId);
+    if (request) {
+        pendingRequests = pendingRequests.filter(r => r.id !== requestId);
+        
+        if (TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID) {
+            await sendTelegramMessage(ADMIN_CHAT_ID, `
+❌ <b>ACCESS REJECTED!</b>
+
+━━━━━━━━━━━━━━━━━━━━
+👤 <b>Name:</b> ${request.name}
+📱 <b>Device:</b> ${request.deviceId.substring(0, 20)}...
+━━━━━━━━━━━━━━━━━━━━
+
+Request has been rejected.
+            `);
+        }
+    }
+    
     res.json({ success: true, message: 'Request rejected' });
 });
 
@@ -295,16 +371,31 @@ app.post('/api/admin/remove-device', async (req, res) => {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     
+    const device = approvedDevices.get(deviceId);
+    if (device && TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID) {
+        await sendTelegramMessage(ADMIN_CHAT_ID, `
+🗑️ <b>DEVICE REMOVED!</b>
+
+━━━━━━━━━━━━━━━━━━━━
+👤 <b>Name:</b> ${device.name}
+📱 <b>Device:</b> ${deviceId.substring(0, 20)}...
+━━━━━━━━━━━━━━━━━━━━
+
+User access has been revoked.
+        `);
+    }
+    
     approvedDevices.delete(deviceId);
     res.json({ success: true, message: 'Device removed' });
 });
 
 // Telegram webhook
 app.post('/webhook/telegram', async (req, res) => {
-    const { callback_query } = req.body;
+    const { callback_query, message } = req.body;
     
     if (callback_query) {
         const data = callback_query.data;
+        const chatId = callback_query.message.chat.id;
         
         if (data.startsWith('approve_')) {
             const requestId = data.replace('approve_', '');
@@ -323,12 +414,66 @@ app.post('/webhook/telegram', async (req, res) => {
                     expiryDate: expiryDate.toISOString()
                 });
                 
-                await sendTelegramMessage(ADMIN_CHAT_ID, `✅ Approved: ${request.name}`);
+                await sendTelegramMessage(chatId, `
+✅ <b>APPROVED!</b>
+
+👤 ${request.name}
+🔑 Key: <code>${request.key}</code>
+⏰ Expires: ${expiryDate.toLocaleDateString()}
+                `);
+                
+                await sendTelegramMessage(ADMIN_CHAT_ID, `✅ Approved: ${request.name} for 30 days`);
             }
-        } else if (data.startsWith('reject_')) {
+        } 
+        else if (data.startsWith('custom_')) {
+            const requestId = data.replace('custom_', '');
+            const request = pendingRequests.find(r => r.id === requestId);
+            
+            if (request) {
+                const keyboard = {
+                    inline_keyboard: [
+                        [{ text: '7 days', callback_data: `days_7_${requestId}` }],
+                        [{ text: '15 days', callback_data: `days_15_${requestId}` }],
+                        [{ text: '30 days', callback_data: `days_30_${requestId}` }],
+                        [{ text: '60 days', callback_data: `days_60_${requestId}` }],
+                        [{ text: '90 days', callback_data: `days_90_${requestId}` }]
+                    ]
+                };
+                await sendTelegramMessage(chatId, 'Select duration:', keyboard);
+            }
+        }
+        else if (data.startsWith('days_')) {
+            const parts = data.split('_');
+            const days = parseInt(parts[1]);
+            const requestId = parts[2];
+            const request = pendingRequests.find(r => r.id === requestId);
+            
+            if (request) {
+                pendingRequests = pendingRequests.filter(r => r.id !== requestId);
+                const expiryDate = new Date();
+                expiryDate.setDate(expiryDate.getDate() + days);
+                
+                approvedDevices.set(request.deviceId, {
+                    name: request.name,
+                    key: request.key,
+                    telegramUsername: request.telegramUsername || '',
+                    approvedAt: new Date().toISOString(),
+                    expiryDate: expiryDate.toISOString()
+                });
+                
+                await sendTelegramMessage(chatId, `
+✅ <b>APPROVED for ${days} days!</b>
+
+👤 ${request.name}
+🔑 Key: <code>${request.key}</code>
+⏰ Expires: ${expiryDate.toLocaleDateString()}
+                `);
+            }
+        }
+        else if (data.startsWith('reject_')) {
             const requestId = data.replace('reject_', '');
             pendingRequests = pendingRequests.filter(r => r.id !== requestId);
-            await sendTelegramMessage(ADMIN_CHAT_ID, `❌ Rejected: Request ${requestId}`);
+            await sendTelegramMessage(chatId, '❌ Request rejected');
         }
         
         res.sendStatus(200);
@@ -366,7 +511,6 @@ app.get('/admin', (req, res) => {
         }
         .container { max-width: 1400px; margin: 0 auto; }
         
-        /* Header */
         .header {
             background: white;
             border-radius: 20px;
@@ -376,10 +520,7 @@ app.get('/admin', (req, res) => {
         }
         .header h1 { color: #667eea; font-size: 28px; margin-bottom: 5px; }
         .header p { color: #666; font-size: 14px; }
-        .header-links { margin-top: 15px; }
-        .header-links a { color: #667eea; text-decoration: none; font-size: 13px; }
         
-        /* Stats Cards */
         .stats {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -392,14 +533,10 @@ app.get('/admin', (req, res) => {
             padding: 20px;
             text-align: center;
             box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-            transition: transform 0.2s;
         }
-        .stat-card:hover { transform: translateY(-5px); }
         .stat-number { font-size: 42px; font-weight: bold; color: #667eea; }
-        .stat-label { color: #666; margin-top: 8px; font-size: 13px; }
-        .stat-icon { font-size: 30px; margin-bottom: 10px; }
+        .stat-label { color: #666; margin-top: 8px; }
         
-        /* Sections */
         .section {
             background: white;
             border-radius: 20px;
@@ -412,11 +549,26 @@ app.get('/admin', (req, res) => {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #f0f0f0;
+            flex-wrap: wrap;
+            gap: 15px;
         }
         .section-header h2 { color: #667eea; font-size: 20px; }
-        .refresh-btn {
+        
+        .search-box {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .search-box input {
+            padding: 8px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            width: 250px;
+            font-size: 13px;
+        }
+        .search-box input:focus { outline: none; border-color: #667eea; }
+        
+        .refresh-btn, .export-btn {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
@@ -425,15 +577,9 @@ app.get('/admin', (req, res) => {
             cursor: pointer;
             font-size: 13px;
         }
+        .export-btn { background: #28a745; }
         
-        /* Tables */
-        .table-wrapper {
-            overflow-x: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
+        table { width: 100%; border-collapse: collapse; }
         th {
             background: #f8f9fa;
             color: #667eea;
@@ -449,19 +595,26 @@ app.get('/admin', (req, res) => {
         }
         tr:hover { background: #f8f9fa; }
         
-        /* Badges */
-        .badge-pending { background: #ffc107; color: #333; padding: 4px 10px; border-radius: 20px; font-size: 11px; }
         .badge-approved { background: #28a745; color: white; padding: 4px 10px; border-radius: 20px; font-size: 11px; }
-        .badge-expiring { background: #dc3545; color: white; padding: 4px 10px; border-radius: 20px; font-size: 11px; }
         .badge-warning { background: #fd7e14; color: white; padding: 4px 10px; border-radius: 20px; font-size: 11px; }
+        .badge-expired { background: #dc3545; color: white; padding: 4px 10px; border-radius: 20px; font-size: 11px; }
+        .badge-pending { background: #ffc107; color: #333; padding: 4px 10px; border-radius: 20px; font-size: 11px; }
         
-        /* Buttons */
-        .btn-approve { background: #28a745; color: white; border: none; padding: 6px 15px; border-radius: 8px; cursor: pointer; font-size: 11px; margin: 2px; }
-        .btn-reject { background: #dc3545; color: white; border: none; padding: 6px 15px; border-radius: 8px; cursor: pointer; font-size: 11px; margin: 2px; }
-        .btn-remove { background: #ffc107; color: #333; border: none; padding: 6px 15px; border-radius: 8px; cursor: pointer; font-size: 11px; margin: 2px; }
-        .btn-copy { background: #17a2b8; color: white; border: none; padding: 3px 8px; border-radius: 5px; cursor: pointer; font-size: 10px; }
+        .btn-approve, .btn-reject, .btn-remove, .btn-extend, .btn-reduce {
+            padding: 5px 12px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 11px;
+            margin: 2px;
+        }
+        .btn-approve { background: #28a745; color: white; }
+        .btn-reject { background: #dc3545; color: white; }
+        .btn-remove { background: #ffc107; color: #333; }
+        .btn-extend { background: #17a2b8; color: white; }
+        .btn-reduce { background: #fd7e14; color: white; }
+        .btn-copy { background: #6c757d; color: white; border: none; padding: 3px 8px; border-radius: 5px; cursor: pointer; font-size: 10px; }
         
-        /* Login Form */
         .login-form {
             max-width: 420px;
             margin: 100px auto;
@@ -477,9 +630,7 @@ app.get('/admin', (req, res) => {
             margin: 10px 0;
             border: 2px solid #e0e0e0;
             border-radius: 12px;
-            font-size: 14px;
         }
-        .login-form input:focus { outline: none; border-color: #667eea; }
         .login-form button {
             width: 100%;
             padding: 12px;
@@ -490,71 +641,36 @@ app.get('/admin', (req, res) => {
             cursor: pointer;
             font-size: 16px;
             font-weight: bold;
-            margin-top: 15px;
         }
         
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #999;
-        }
+        .empty-state { text-align: center; padding: 40px; color: #999; }
+        .table-wrapper { overflow-x: auto; }
         
-        /* Responsive */
-        @media (max-width: 1000px) {
-            .stats { grid-template-columns: repeat(2, 1fr); }
-        }
-        @media (max-width: 600px) {
-            .stats { grid-template-columns: 1fr; }
-            .section-header { flex-direction: column; gap: 10px; }
-        }
+        @media (max-width: 1000px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 600px) { .stats { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Login Section -->
         <div id="loginSection" class="login-form">
             <h2>🔐 Admin Login</h2>
             <input type="password" id="adminPassword" placeholder="Enter Admin Password">
             <button onclick="login()">Login to Dashboard</button>
         </div>
         
-        <!-- Dashboard Section -->
         <div id="dashboardSection" style="display:none;">
-            <!-- Header -->
             <div class="header">
                 <h1>🛡️ Proxy Tools Admin Dashboard</h1>
-                <p>Manage user access requests and approved devices</p>
-                <div class="header-links">
-                    <a href="/">← Back to Home</a>
-                </div>
+                <p>Manage user access requests, approve users, extend or reduce time</p>
             </div>
             
-            <!-- Stats Cards -->
             <div class="stats">
-                <div class="stat-card">
-                    <div class="stat-icon">👥</div>
-                    <div class="stat-number" id="totalUsers">0</div>
-                    <div class="stat-label">Total Users</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">⏳</div>
-                    <div class="stat-number" id="totalPending">0</div>
-                    <div class="stat-label">Pending Requests</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">✅</div>
-                    <div class="stat-number" id="totalApproved">0</div>
-                    <div class="stat-label">Approved Devices</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">⚠️</div>
-                    <div class="stat-number" id="totalExpiring">0</div>
-                    <div class="stat-label">Expiring Soon (7 days)</div>
-                </div>
+                <div class="stat-card"><div class="stat-number" id="totalUsers">0</div><div class="stat-label">Total Users</div></div>
+                <div class="stat-card"><div class="stat-number" id="totalPending">0</div><div class="stat-label">Pending Requests</div></div>
+                <div class="stat-card"><div class="stat-number" id="totalApproved">0</div><div class="stat-label">Approved Devices</div></div>
+                <div class="stat-card"><div class="stat-number" id="totalExpiring">0</div><div class="stat-label">Expiring Soon (7 days)</div></div>
             </div>
             
-            <!-- Pending Requests Table -->
             <div class="section">
                 <div class="section-header">
                     <h2>📋 Pending Requests</h2>
@@ -563,11 +679,14 @@ app.get('/admin', (req, res) => {
                 <div class="table-wrapper" id="pendingTable"></div>
             </div>
             
-            <!-- Approved Users Table -->
             <div class="section">
                 <div class="section-header">
                     <h2>✅ Approved Users</h2>
-                    <button class="refresh-btn" onclick="exportToCSV()">📥 Export CSV</button>
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="🔍 Search by name, device or key..." onkeyup="filterTable()">
+                        <button class="export-btn" onclick="exportToCSV()">📥 Export CSV</button>
+                        <button class="refresh-btn" onclick="loadData()">🔄 Refresh</button>
+                    </div>
                 </div>
                 <div class="table-wrapper" id="approvedTable"></div>
             </div>
@@ -576,6 +695,7 @@ app.get('/admin', (req, res) => {
     
     <script>
         let authToken = '';
+        let allApprovedData = [];
         
         async function login() {
             const password = document.getElementById('adminPassword').value;
@@ -604,12 +724,12 @@ app.get('/admin', (req, res) => {
                 });
                 const data = await response.json();
                 
-                // Update stats
+                allApprovedData = data.approvedDevices;
+                
                 document.getElementById('totalUsers').textContent = data.totalUsers;
                 document.getElementById('totalPending').textContent = data.totalPending;
                 document.getElementById('totalApproved').textContent = data.approvedDevices.length;
                 
-                // Calculate expiring soon (7 days)
                 const expiringCount = data.approvedDevices.filter(dev => {
                     const expiryDate = new Date(dev.expiryDate);
                     const daysLeft = Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24));
@@ -621,113 +741,134 @@ app.get('/admin', (req, res) => {
                 if (data.pendingRequests.length === 0) {
                     document.getElementById('pendingTable').innerHTML = '<div class="empty-state">✨ No pending requests</div>';
                 } else {
-                    let pendingHtml = \`
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>👤 Name</th>
-                                    <th>📱 Telegram</th>
-                                    <th>🔑 Device ID</th>
-                                    <th>🗝️ Key</th>
-                                    <th>⏰ Time</th>
-                                    <th>⚡ Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    \`;
+                    let html = '<table><thead><tr><th>👤 Name</th><th>📱 Telegram</th><th>🔑 Device ID</th><th>🗝️ Key</th><th>⏰ Time</th><th>⚡ Actions</th></tr></thead><tbody>';
                     data.pendingRequests.forEach(req => {
-                        const time = new Date(req.timestamp).toLocaleString();
-                        pendingHtml += \`
+                        html += \`
                             <tr>
                                 <td><strong>\${escapeHtml(req.name)}</strong></td>
                                 <td>\${req.telegramUsername || '-'}</td>
                                 <td><code>\${req.deviceId.substring(0, 16)}...</code></td>
                                 <td><code>\${req.key}</code> <button class="btn-copy" onclick="copyText('\${req.key}')">Copy</button></td>
-                                <td>\${time}</td>
+                                <td>\${new Date(req.timestamp).toLocaleString()}</td>
                                 <td>
-                                    <button class="btn-approve" onclick="approveRequest('\${req.id}')">✅ Approve</button>
+                                    <button class="btn-approve" onclick="approveWithDays('\${req.id}', 30)">✅ 30 days</button>
+                                    <button class="btn-approve" onclick="showDaysPopup('\${req.id}')">⏰ Custom</button>
                                     <button class="btn-reject" onclick="rejectRequest('\${req.id}')">❌ Reject</button>
                                 </td>
                             </tr>
                         \`;
                     });
-                    pendingHtml += '</tbody></table>';
-                    document.getElementById('pendingTable').innerHTML = pendingHtml;
+                    html += '</tbody></table>';
+                    document.getElementById('pendingTable').innerHTML = html;
                 }
                 
-                // Approved Users Table
-                if (data.approvedDevices.length === 0) {
-                    document.getElementById('approvedTable').innerHTML = '<div class="empty-state">📭 No approved users yet</div>';
-                } else {
-                    let approvedHtml = \`
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>👤 Name</th>
-                                    <th>📱 Telegram</th>
-                                    <th>🔑 Device ID</th>
-                                    <th>🗝️ Access Key</th>
-                                    <th>📅 Approved</th>
-                                    <th>⏰ Expiry</th>
-                                    <th>⚡ Status</th>
-                                    <th>🛠️ Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                    \`;
-                    data.approvedDevices.forEach(dev => {
-                        const approvedDate = new Date(dev.approvedAt).toLocaleDateString();
-                        const expiryDate = new Date(dev.expiryDate);
-                        const now = new Date();
-                        const daysLeft = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
-                        
-                        let statusBadge = '';
-                        let statusText = '';
-                        if (daysLeft <= 0) {
-                            statusBadge = 'badge-expiring';
-                            statusText = 'Expired';
-                        } else if (daysLeft <= 7) {
-                            statusBadge = 'badge-warning';
-                            statusText = daysLeft + ' days left';
-                        } else {
-                            statusBadge = 'badge-approved';
-                            statusText = daysLeft + ' days left';
-                        }
-                        
-                        approvedHtml += \`
-                            <tr>
-                                <td><strong>\${escapeHtml(dev.name)}</strong></td>
-                                <td>\${dev.telegramUsername || '-'}</td>
-                                <td><code>\${dev.deviceId.substring(0, 16)}...</code></td>
-                                <td><code>\${dev.key}</code> <button class="btn-copy" onclick="copyText('\${dev.key}')">Copy</button></td>
-                                <td>\${approvedDate}</td>
-                                <td>\${expiryDate.toLocaleDateString()}</td>
-                                <td><span class="\${statusBadge}">\${statusText}</span></td>
-                                <td><button class="btn-remove" onclick="removeDevice('\${dev.deviceId}')">🗑️ Remove</button></td>
-                            </tr>
-                        \`;
-                    });
-                    approvedHtml += '</tbody></table>';
-                    document.getElementById('approvedTable').innerHTML = approvedHtml;
-                }
+                renderApprovedTable(allApprovedData);
             } catch (error) {
-                console.error('Error loading data:', error);
+                console.error('Error:', error);
             }
         }
         
-        async function approveRequest(requestId) {
-            if (confirm('Approve this request? User will get 30 days access.')) {
+        function renderApprovedTable(data) {
+            if (data.length === 0) {
+                document.getElementById('approvedTable').innerHTML = '<div class="empty-state">📭 No approved users yet</div>';
+                return;
+            }
+            
+            let html = '<table><thead><tr><th>👤 Name</th><th>📱 Telegram</th><th>🔑 Device ID</th><th>🗝️ Access Key</th><th>📅 Approved</th><th>⏰ Expiry</th><th>📊 Status</th><th>⚙️ Actions</th></tr></thead><tbody>';
+            
+            data.forEach(dev => {
+                const approvedDate = new Date(dev.approvedAt).toLocaleDateString();
+                const expiryDate = new Date(dev.expiryDate);
+                const now = new Date();
+                const daysLeft = Math.ceil((expiryDate - now) / (1000 * 60 * 60 * 24));
+                
+                let statusClass = 'badge-approved';
+                let statusText = daysLeft + ' days left';
+                if (daysLeft <= 0) {
+                    statusClass = 'badge-expired';
+                    statusText = 'Expired';
+                } else if (daysLeft <= 7) {
+                    statusClass = 'badge-warning';
+                    statusText = daysLeft + ' days left ⚠️';
+                }
+                
+                html += \`
+                    <tr>
+                        <td><strong>\${escapeHtml(dev.name)}</strong></td>
+                        <td>\${dev.telegramUsername || '-'}</td>
+                        <td><code>\${dev.deviceId.substring(0, 16)}...</code></td>
+                        <td><code>\${dev.key}</code> <button class="btn-copy" onclick="copyText('\${dev.key}')">Copy</button></td>
+                        <td>\${approvedDate}</td>
+                        <td>\${expiryDate.toLocaleDateString()}</td>
+                        <td><span class="\${statusClass}">\${statusText}</span></td>
+                        <td>
+                            <button class="btn-extend" onclick="updateTime('\${dev.deviceId}', 'extend', 7)">➕ +7d</button>
+                            <button class="btn-extend" onclick="updateTime('\${dev.deviceId}', 'extend', 30)">➕ +30d</button>
+                            <button class="btn-reduce" onclick="updateTime('\${dev.deviceId}', 'reduce', 7)">➖ -7d</button>
+                            <button class="btn-reduce" onclick="updateTime('\${dev.deviceId}', 'reduce', 30)">➖ -30d</button>
+                            <button class="btn-remove" onclick="removeDevice('\${dev.deviceId}')">🗑️ Remove</button>
+                        </td>
+                    </tr>
+                \`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('approvedTable').innerHTML = html;
+        }
+        
+        function filterTable() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            if (!searchTerm) {
+                renderApprovedTable(allApprovedData);
+                return;
+            }
+            
+            const filtered = allApprovedData.filter(dev => 
+                dev.name.toLowerCase().includes(searchTerm) ||
+                dev.deviceId.toLowerCase().includes(searchTerm) ||
+                dev.key.toLowerCase().includes(searchTerm) ||
+                (dev.telegramUsername && dev.telegramUsername.toLowerCase().includes(searchTerm))
+            );
+            renderApprovedTable(filtered);
+        }
+        
+        function showDaysPopup(requestId) {
+            const days = prompt('Enter number of days for access:', '30');
+            if (days && !isNaN(days)) {
+                approveWithDays(requestId, parseInt(days));
+            }
+        }
+        
+        async function approveWithDays(requestId, days) {
+            if (confirm(\`Approve for \${days} days?\`)) {
                 const response = await fetch('/api/admin/approve', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ requestId: requestId, authToken: authToken })
+                    body: JSON.stringify({ requestId: requestId, authToken: authToken, days: days })
                 });
                 const data = await response.json();
                 if (data.success) {
                     loadData();
-                    alert('✅ Request approved for 30 days!');
+                    alert(\`✅ Approved for \${days} days!\`);
                 } else {
                     alert('❌ Failed to approve');
+                }
+            }
+        }
+        
+        async function updateTime(deviceId, action, days) {
+            const actionText = action === 'extend' ? 'extend by' : 'reduce by';
+            if (confirm(\`Are you sure you want to \${actionText} \${days} days?\`)) {
+                const response = await fetch('/api/admin/update-expiry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ deviceId: deviceId, authToken: authToken, action: action, days: days })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    loadData();
+                    alert(\`✅ Time \${action}ed by \${days} days! New expiry: \${new Date(data.newExpiry).toLocaleDateString()}\`);
+                } else {
+                    alert('❌ Failed to update time');
                 }
             }
         }
@@ -768,23 +909,23 @@ app.get('/admin', (req, res) => {
         }
         
         function exportToCSV() {
-            const table = document.querySelector('#approvedTable table');
-            if (!table) return;
+            let csv = [['Name', 'Telegram', 'Device ID', 'Access Key', 'Approved Date', 'Expiry Date', 'Days Left']];
+            allApprovedData.forEach(dev => {
+                const expiryDate = new Date(dev.expiryDate);
+                const daysLeft = Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24));
+                csv.push([
+                    dev.name,
+                    dev.telegramUsername || '',
+                    dev.deviceId,
+                    dev.key,
+                    new Date(dev.approvedAt).toLocaleDateString(),
+                    expiryDate.toLocaleDateString(),
+                    daysLeft
+                ]);
+            });
             
-            let csv = [];
-            const rows = table.querySelectorAll('tr');
-            for (let row of rows) {
-                const cells = row.querySelectorAll('th, td');
-                const rowData = [];
-                for (let cell of cells) {
-                    let text = cell.innerText;
-                    if (text.includes('Copy')) continue;
-                    rowData.push('"' + text.replace(/"/g, '""') + '"');
-                }
-                if (rowData.length) csv.push(rowData.join(','));
-            }
-            
-            const blob = new Blob([csv.join('\\n')], { type: 'text/csv' });
+            const csvContent = csv.map(row => row.map(cell => \`"\${cell}"\`).join(',')).join('\\n');
+            const blob = new Blob([csvContent], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -807,22 +948,7 @@ app.get('/admin', (req, res) => {
 
 // 404 handler
 app.use((req, res) => {
-    res.status(404).send(`
-<!DOCTYPE html>
-<html>
-<head><title>404</title>
-<style>
-    body{font-family:Arial;background:linear-gradient(135deg,#667eea,#764ba2);display:flex;justify-content:center;align-items:center;height:100vh;}
-    .container{background:white;border-radius:20px;padding:40px;text-align:center;}
-    h1{color:#dc3545;font-size:72px;}
-    a{background:#667eea;color:white;padding:10px 20px;text-decoration:none;border-radius:25px;display:inline-block;margin-top:20px;}
-</style>
-</head>
-<body>
-<div class="container"><h1>404</h1><p>Page not found</p><a href="/">Go Home</a></div>
-</body>
-</html>
-    `);
+    res.status(404).send('<h1>404 - Page Not Found</h1><a href="/">Go Home</a>');
 });
 
 // Start server
@@ -830,10 +956,8 @@ app.listen(PORT, () => {
     console.log('='.repeat(50));
     console.log('🚀 Proxy Tools Backend Server');
     console.log('='.repeat(50));
-    console.log(`📡 Server running on port ${PORT}`);
-    console.log(`🏠 Home page: http://localhost:${PORT}/`);
-    console.log(`📱 Admin Dashboard: http://localhost:${PORT}/admin`);
-    console.log(`🤖 Telegram Bot: ${TELEGRAM_BOT_TOKEN ? 'CONFIGURED ✅' : 'NOT CONFIGURED ⚠️'}`);
-    console.log(`👤 Admin Chat ID: ${ADMIN_CHAT_ID ? 'CONFIGURED ✅' : 'NOT CONFIGURED ⚠️'}`);
+    console.log(`📡 Server: http://localhost:${PORT}/`);
+    console.log(`📱 Admin: http://localhost:${PORT}/admin`);
+    console.log(`🤖 Telegram: ${TELEGRAM_BOT_TOKEN ? '✅' : '❌'}`);
     console.log('='.repeat(50));
 });
