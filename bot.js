@@ -6,28 +6,32 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// এনভায়রনমেন্ট ভেরিয়েবল থেকে ভ্যালু নিবে
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const PORT = process.env.PORT || 3000;
+
+// চেক করুন টোকেন আছে কিনা
+if (!TELEGRAM_BOT_TOKEN || !ADMIN_CHAT_ID) {
+    console.error('⚠️ ERROR: TELEGRAM_BOT_TOKEN and ADMIN_CHAT_ID are required!');
+    console.error('Please set these environment variables in Railway.');
+}
+
 // স্টোরেজ (প্রোডাকশনে ডাটাবেস ব্যবহার করুন)
 let pendingRequests = [];
 let approvedDevices = new Map();
 let users = [];
-
-// টেলিগ্রাম বোট সেটআপ
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || 'YOUR_BOT_TOKEN';
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || 'YOUR_ADMIN_CHAT_ID';
-const BOT_USERNAME = '@thispersonisbrand537';
 
 // ইউনিক কী জেনারেট
 function generateUniqueKey() {
     return crypto.randomBytes(16).toString('hex').toUpperCase();
 }
 
-// ডিভাইস আইডি জেনারেট
-function generateDeviceId() {
-    return crypto.randomBytes(8).toString('hex').toUpperCase();
-}
-
 // টেলিগ্রাম মেসেজ পাঠান
 async function sendTelegramMessage(chatId, text, keyboard = null) {
+    if (!TELEGRAM_BOT_TOKEN) return;
+    
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     const payload = {
         chat_id: chatId,
@@ -40,6 +44,7 @@ async function sendTelegramMessage(chatId, text, keyboard = null) {
     }
     
     try {
+        const fetch = (await import('node-fetch')).default;
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -51,7 +56,148 @@ async function sendTelegramMessage(chatId, text, keyboard = null) {
     }
 }
 
-// API: রিকোয়েস্ট সাবমিট
+// ============= HOME PAGE ROUTE (এটি যোগ করুন) =============
+app.get('/', (req, res) => {
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Proxy Tools API Server</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .status {
+            background: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .info {
+            text-align: left;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .info-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .label {
+            font-weight: bold;
+            color: #667eea;
+        }
+        .button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            margin-top: 20px;
+            transition: 0.3s;
+        }
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102,126,234,0.4);
+        }
+        .endpoints {
+            text-align: left;
+            margin-top: 20px;
+        }
+        .endpoint {
+            background: #e9ecef;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        footer {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Proxy Tools API Server</h1>
+        <div class="status">
+            ✅ Server is Running
+        </div>
+        <div class="info">
+            <div class="info-item">
+                <span class="label">📡 Status:</span> Online
+            </div>
+            <div class="info-item">
+                <span class="label">🤖 Telegram Bot:</span> ${TELEGRAM_BOT_TOKEN ? '✅ Connected' : '❌ Not Configured'}
+            </div>
+            <div class="info-item">
+                <span class="label">👥 Pending Requests:</span> ${pendingRequests.length}
+            </div>
+            <div class="info-item">
+                <span class="label">✅ Approved Users:</span> ${approvedDevices.size}
+            </div>
+            <div class="info-item">
+                <span class="label">⏰ Server Time:</span> ${new Date().toLocaleString()}
+            </div>
+        </div>
+        <a href="/admin" class="button">📊 Go to Admin Dashboard</a>
+        
+        <div class="endpoints">
+            <strong>📌 Available Endpoints:</strong>
+            <div class="endpoint">GET  /             - This page</div>
+            <div class="endpoint">GET  /admin        - Admin Dashboard</div>
+            <div class="endpoint">GET  /health       - Health check</div>
+            <div class="endpoint">POST /api/request-access - Request access</div>
+            <div class="endpoint">POST /api/check-status   - Check approval status</div>
+            <div class="endpoint">POST /api/admin/login    - Admin login</div>
+            <div class="endpoint">GET  /api/admin/dashboard - Admin data</div>
+            <div class="endpoint">POST /api/admin/approve  - Approve request</div>
+            <div class="endpoint">POST /api/admin/reject   - Reject request</div>
+            <div class="endpoint">POST /api/admin/remove-device - Remove device</div>
+        </div>
+        
+        <footer>
+            Made with ❤️ by This person is brand
+        </footer>
+    </div>
+</body>
+</html>
+    `);
+});
+
+// ============= API ROUTES =============
+
+// API: রিকোয়েস্ট সাবমিট
 app.post('/api/request-access', async (req, res) => {
     const { name, deviceId, extensionId } = req.body;
     
@@ -82,7 +228,7 @@ app.post('/api/request-access', async (req, res) => {
     const accessKey = generateUniqueKey();
     const requestId = Date.now().toString();
     
-    // পেন্ডিং রিকোয়েস্ট সেভ
+    // পেন্ডিং রিকোয়েস্ট সেভ
     const newRequest = {
         id: requestId,
         name: name,
@@ -96,7 +242,8 @@ app.post('/api/request-access', async (req, res) => {
     pendingRequests.push(newRequest);
     
     // অ্যাডমিনকে টেলিগ্রামে নোটিফিকেশন
-    const adminMessage = `
+    if (TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID) {
+        const adminMessage = `
 🔐 <b>New Access Request!</b>
 
 👤 <b>Name:</b> ${name}
@@ -108,18 +255,19 @@ app.post('/api/request-access', async (req, res) => {
 ⚙️ <b>Tool:</b> Proxy Tools
 
 Please approve this request.
-    `;
-    
-    const keyboard = {
-        inline_keyboard: [
-            [
-                { text: '✅ Approve', callback_data: `approve_${requestId}` },
-                { text: '❌ Reject', callback_data: `reject_${requestId}` }
+        `;
+        
+        const keyboard = {
+            inline_keyboard: [
+                [
+                    { text: '✅ Approve', callback_data: `approve_${requestId}` },
+                    { text: '❌ Reject', callback_data: `reject_${requestId}` }
+                ]
             ]
-        ]
-    };
-    
-    await sendTelegramMessage(ADMIN_CHAT_ID, adminMessage, keyboard);
+        };
+        
+        await sendTelegramMessage(ADMIN_CHAT_ID, adminMessage, keyboard);
+    }
     
     res.json({ 
         success: true, 
@@ -129,7 +277,7 @@ Please approve this request.
     });
 });
 
-// API: অ্যাপ্রুভ স্ট্যাটাস চেক
+// API: চেক স্ট্যাটাস
 app.post('/api/check-status', async (req, res) => {
     const { deviceId } = req.body;
     
@@ -156,7 +304,6 @@ app.post('/api/check-status', async (req, res) => {
 // API: অ্যাডমিন লগইন
 app.post('/api/admin/login', async (req, res) => {
     const { password } = req.body;
-    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
     
     if (password === ADMIN_PASSWORD) {
         res.json({ success: true, token: 'admin-session-token' });
@@ -186,7 +333,7 @@ app.get('/api/admin/dashboard', async (req, res) => {
     });
 });
 
-// API: অ্যাপ্রুভ রিকোয়েস্ট
+// API: অ্যাপ্রুভ রিকোয়েস্ট
 app.post('/api/admin/approve', async (req, res) => {
     const { requestId, authToken } = req.body;
     
@@ -199,10 +346,8 @@ app.post('/api/admin/approve', async (req, res) => {
         return res.json({ error: 'Request not found' });
     }
     
-    // পেন্ডিং থেকে রিমুভ
     pendingRequests = pendingRequests.filter(r => r.id !== requestId);
     
-    // অ্যাপ্রুভড ডিভাইসে যোগ
     approvedDevices.set(request.deviceId, {
         name: request.name,
         key: request.key,
@@ -217,7 +362,19 @@ app.post('/api/admin/approve', async (req, res) => {
         status: 'active'
     });
     
-    // ইউজারকে সাকসেস মেসেজ পাঠান (যদি extension রিটার্ন করে)
+    // ইউজারকে টেলিগ্রামে সাকসেস মেসেজ
+    if (TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID) {
+        await sendTelegramMessage(ADMIN_CHAT_ID, `
+✅ <b>Request Approved!</b>
+
+👤 Name: ${request.name}
+🔑 Key: <code>${request.key}</code>
+📱 Device: ${request.deviceId}
+
+User can now use the proxy tool.
+        `);
+    }
+    
     res.json({ 
         success: true, 
         message: 'Request approved successfully',
@@ -226,7 +383,7 @@ app.post('/api/admin/approve', async (req, res) => {
     });
 });
 
-// API: রিজেক্ট রিকোয়েস্ট
+// API: রিজেক্ট রিকোয়েস্ট
 app.post('/api/admin/reject', async (req, res) => {
     const { requestId, authToken } = req.body;
     
@@ -253,13 +410,12 @@ app.post('/api/admin/remove-device', async (req, res) => {
     res.json({ success: true, message: 'Device removed' });
 });
 
-// টেলিগ্রাম ওয়েবহুক (callback queries)
+// টেলিগ্রাম ওয়েবহুক
 app.post('/webhook/telegram', async (req, res) => {
     const { callback_query } = req.body;
     
     if (callback_query) {
         const data = callback_query.data;
-        const messageId = callback_query.message.message_id;
         
         if (data.startsWith('approve_')) {
             const requestId = data.replace('approve_', '');
@@ -274,13 +430,11 @@ app.post('/webhook/telegram', async (req, res) => {
                 });
                 
                 await sendTelegramMessage(ADMIN_CHAT_ID, `
-✅ <b>Request Approved!</b>
+✅ <b>Request Approved via Bot!</b>
 
 👤 Name: ${request.name}
 🔑 Key: <code>${request.key}</code>
 📱 Device: ${request.deviceId}
-
-User can now use the proxy tool.
                 `);
             }
         } else if (data.startsWith('reject_')) {
@@ -291,14 +445,27 @@ User can now use the proxy tool.
 ❌ <b>Request Rejected!</b>
 
 Request ID: ${requestId}
-                `);
+            `);
         }
         
+        res.sendStatus(200);
+    } else {
         res.sendStatus(200);
     }
 });
 
-// অ্যাডমিন ড্যাশবোর্ড HTML
+// হেলথ চেক
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        telegramConfigured: !!(TELEGRAM_BOT_TOKEN && ADMIN_CHAT_ID),
+        pendingCount: pendingRequests.length,
+        approvedCount: approvedDevices.size
+    });
+});
+
+// ============= অ্যাডমিন ড্যাশবোর্ড HTML =============
 app.get('/admin', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -408,13 +575,6 @@ app.get('/admin', (req, res) => {
             border-radius: 8px;
             cursor: pointer;
         }
-        .status-badge {
-            padding: 3px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-        }
-        .status-pending { background: #ffc107; color: #333; }
-        .status-approved { background: #28a745; color: white; }
         .refresh-btn {
             background: #667eea;
             color: white;
@@ -433,48 +593,56 @@ app.get('/admin', (req, res) => {
             cursor: pointer;
             font-size: 11px;
         }
+        .back-link {
+            display: inline-block;
+            margin-top: 10px;
+            color: #667eea;
+            text-decoration: none;
+        }
     </style>
 </head>
 <body>
-    <div id="app">
-        <div class="container">
-            <div id="loginSection" class="login-form">
-                <h2 style="text-align:center;">Admin Login</h2>
-                <input type="password" id="adminPassword" placeholder="Enter Admin Password">
-                <button onclick="login()">Login to Dashboard</button>
+    <div class="container">
+        <div id="loginSection" class="login-form">
+            <h2 style="text-align:center;">Admin Login</h2>
+            <input type="password" id="adminPassword" placeholder="Enter Admin Password">
+            <button onclick="login()">Login to Dashboard</button>
+            <div style="text-align:center; margin-top:15px;">
+                <a href="/" class="back-link">← Back to Home</a>
+            </div>
+        </div>
+        
+        <div id="dashboardSection" style="display:none;">
+            <div class="header">
+                <h1>🛡️ Proxy Tools Admin Dashboard</h1>
+                <p>Manage user access requests and approved devices</p>
+                <a href="/" style="color:#667eea; font-size:12px;">← Back to Home</a>
             </div>
             
-            <div id="dashboardSection" style="display:none;">
-                <div class="header">
-                    <h1>🛡️ Proxy Tools Admin Dashboard</h1>
-                    <p>Manage user access requests and approved devices</p>
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="totalUsers">0</div>
+                    <div class="stat-label">Total Users</div>
                 </div>
-                
-                <div class="stats">
-                    <div class="stat-card">
-                        <div class="stat-number" id="totalUsers">0</div>
-                        <div class="stat-label">Total Users</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" id="totalPending">0</div>
-                        <div class="stat-label">Pending Requests</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" id="totalApproved">0</div>
-                        <div class="stat-label">Approved Devices</div>
-                    </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="totalPending">0</div>
+                    <div class="stat-label">Pending Requests</div>
                 </div>
-                
-                <div class="section">
-                    <h2>📋 Pending Requests</h2>
-                    <button class="refresh-btn" onclick="loadData()">🔄 Refresh</button>
-                    <div id="pendingTable"></div>
+                <div class="stat-card">
+                    <div class="stat-number" id="totalApproved">0</div>
+                    <div class="stat-label">Approved Devices</div>
                 </div>
-                
-                <div class="section">
-                    <h2>✅ Approved Users</h2>
-                    <div id="approvedTable"></div>
-                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📋 Pending Requests</h2>
+                <button class="refresh-btn" onclick="loadData()">🔄 Refresh</button>
+                <div id="pendingTable"></div>
+            </div>
+            
+            <div class="section">
+                <h2>✅ Approved Users</h2>
+                <div id="approvedTable"></div>
             </div>
         </div>
     </div>
@@ -511,14 +679,13 @@ app.get('/admin', (req, res) => {
             document.getElementById('totalPending').textContent = data.totalPending;
             document.getElementById('totalApproved').textContent = data.approvedDevices.length;
             
-            // Pending table
             let pendingHtml = '<table><tr><th>Name</th><th>Device ID</th><th>Key</th><th>Time</th><th>Actions</th></tr>';
             data.pendingRequests.forEach(req => {
                 pendingHtml += \`
                     <tr>
                         <td>\${req.name}</td>
                         <td><code>\${req.deviceId}</code></td>
-                        <td><code>\${req.key}</code></td>
+                        <td><code>\${req.key}</code> <button class="copy-btn" onclick="copyText('\${req.key}')">Copy</button></td>
                         <td>\${new Date(req.timestamp).toLocaleString()}</td>
                         <td>
                             <button class="approve-btn" onclick="approveRequest('\${req.id}')">Approve</button>
@@ -531,7 +698,6 @@ app.get('/admin', (req, res) => {
             if (data.pendingRequests.length === 0) pendingHtml = '<p>No pending requests</p>';
             document.getElementById('pendingTable').innerHTML = pendingHtml;
             
-            // Approved table
             let approvedHtml = '<table><tr><th>Name</th><th>Device ID</th><th>Key</th><th>Approved At</th><th>Actions</th></tr>';
             data.approvedDevices.forEach(dev => {
                 approvedHtml += \`
@@ -597,7 +763,6 @@ app.get('/admin', (req, res) => {
             alert('Copied: ' + text);
         }
         
-        // Auto refresh every 10 seconds
         setInterval(() => {
             if (authToken) loadData();
         }, 10000);
@@ -607,10 +772,62 @@ app.get('/admin', (req, res) => {
     `);
 });
 
+// 404 handler - কোনো রুট না পাওয়া গেলে
+app.use((req, res) => {
+    res.status(404).send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>404 - Page Not Found</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+        }
+        h1 { color: #dc3545; font-size: 72px; margin-bottom: 20px; }
+        p { color: #666; margin-bottom: 20px; }
+        .button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>404</h1>
+        <p>Oops! The page you're looking for doesn't exist.</p>
+        <a href="/" class="button">🏠 Go to Home</a>
+    </div>
+</body>
+</html>
+    `);
+});
+
 // সার্ভার স্টার্ট
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log('='.repeat(50));
+    console.log('🚀 Proxy Tools Backend Server');
+    console.log('='.repeat(50));
+    console.log(`📡 Server running on port ${PORT}`);
+    console.log(`🏠 Home page: http://localhost:${PORT}/`);
     console.log(`📱 Admin Dashboard: http://localhost:${PORT}/admin`);
-    console.log(`🤖 Telegram Bot Active`);
+    console.log(`🤖 Telegram Bot: ${TELEGRAM_BOT_TOKEN ? 'CONFIGURED ✅' : 'NOT CONFIGURED ⚠️'}`);
+    console.log(`👤 Admin Chat ID: ${ADMIN_CHAT_ID ? 'CONFIGURED ✅' : 'NOT CONFIGURED ⚠️'}`);
+    console.log('='.repeat(50));
 });
